@@ -1,3 +1,58 @@
+## 3.43.0
+### Added
+  * Added UnWrap support for replacement response right
+    * Thank you to community member @ArturFortunato for contributing to this solution
+  * Added support for Lambda function URL request and response in the `nrlambda` integration
+    * Thank you to community member @rittneje for contributing to this solution
+  * Added additional Span attribute for Opensearch/elastic search endpoint in the `nrawssdk` integration
+  * Added Support for "WITH" clauses to sqlparse
+
+### Fixed
+  * Fixed failing httptest
+### Security
+  * Updated CI/CD go version
+  * Bumped `nrgrpc` version
+  * Dependabot security bumps
+    * `logcontext/nrlogrus`
+    * `logcontext/nrlogrusplugin`
+    * `logcontext-v2/nrlogrus`
+    * `nrfiber`
+  
+### Support statement
+We use the latest version of the Go language. At minimum, you should be using no version of Go older than what is supported by the Go team themselves.
+See the [Go agent EOL Policy](https://docs.newrelic.com/docs/apm/agents/go-agent/get-started/go-agent-eol-policy/) for details about supported versions of the Go agent and third-party components.
+
+## 3.42.0
+### Added
+  * Added `ConfigTransactionEventsMaxSamplesStored`and `ConfigErrorCollectorMaxSamplesStored` allowing full control of maximum samples stored for Transaction Events, Custom Insights Events, Error Events, and Log Events
+  * Added support for the `MultiValueHeaders` property when extracting the headers from `events.APIGatewayProxyResponse` in nrlambda
+      * Thank you to community member @rittneje for contributing to this solution
+### Fixed
+  * Removed unused variables and modernize by replacing interface{} with any in the `nrpxg5` integration
+  * Fixed a bug where error events did not correctly mark expected errors
+      * Thank you to community member @driimus for contributing to this solution
+  * Bumped `nrwriter` integration to use v1.0.2
+      * Thank you to community member @hiicharm for spotting this.
+### Support statement
+We use the latest version of the Go language. At minimum, you should be using no version of Go older than what is supported by the Go team themselves.
+See the [Go agent EOL Policy](https://docs.newrelic.com/docs/apm/agents/go-agent/get-started/go-agent-eol-policy/) for details about supported versions of the Go agent and third-party components.
+
+## 3.41.0
+### Added
+  * Added `DistributedTracer.Sampler` config options for controlling the sampling behavior for Inbound Requests for distributed traces
+    * To configure the sampler, added `ConfigRemoteParentSampled(flag RemoteParentSamplingConfig)` and `ConfigRemoteParentNotSampled(flag RemoteParentSamplingConfig)` which handles sampling behavior based on what the remote parent has flagged
+    * Flags added are `"always_on", "always_off", and "default"` which can be called using `RemoteParentSamplingConfig`
+    * `Example: newrelic.ConfigRemoteParentSampled(newrelic.AlwaysOff)`
+  * Added OOM Monitoring Tests
+  * Increased Secure Agent Test Coverage
+### Fixed
+  * Updated third-party library versions due to reported security or other supportability issues:
+    * `github.com/gofiber/fiber/v2` from 2.52.7 to 2.52.9 in `nrfiber` integration
+    * `golang.org/x/net` from 0.25.0 to 0.38.0 in `nrconnect` integration
+### Support statement
+We use the latest version of the Go language. At minimum, you should be using no version of Go older than what is supported by the Go team themselves.
+See the [Go agent EOL Policy](https://docs.newrelic.com/docs/apm/agents/go-agent/get-started/go-agent-eol-policy/) for details about supported versions of the Go agent and third-party components.
+
 ## 3.40.1
 ### Fixed
   * Reverted utilization.go back to v3.39.0 release due to deadlock bug

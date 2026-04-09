@@ -87,28 +87,57 @@ func ConfigRemoteParentNotSampled(flag RemoteParentSamplingConfig) ConfigOption 
 	}
 }
 
+// ConfigTransactionEventsMaxSamplesStored alters the sample size allowing control
+// of how many transaction events are stored in an agent for a given harvest cycle.
+// Alters the TransactionEvents.MaxSamplesStored setting.
+// Note: As of Oct 2025, the absolute maximum events that can be sent each minute is 10000.
+func ConfigTransactionEventsMaxSamplesStored(value int) ConfigOption {
+	return func(cfg *Config) {
+		cfg.TransactionEvents.MaxSamplesStored = maxTxnEvents(value)
+	}
+}
+
 // ConfigCustomInsightsEventsMaxSamplesStored alters the sample size allowing control
 // of how many custom events are stored in an agent for a given harvest cycle.
 // Alters the CustomInsightsEvents.MaxSamplesStored setting.
-// Note: As of Jul 2022, the absolute maximum events that can be sent each minute is 100000.
-func ConfigCustomInsightsEventsMaxSamplesStored(limit int) ConfigOption {
-	if limit > 100000 {
-		return func(cfg *Config) { cfg.CustomInsightsEvents.MaxSamplesStored = 100000 }
+// Note: As of Oct 2025, the absolute maximum events that can be sent each minute is 100000.
+func ConfigCustomInsightsEventsMaxSamplesStored(value int) ConfigOption {
+	return func(cfg *Config) {
+		cfg.CustomInsightsEvents.MaxSamplesStored = maxCustomEvents(value)
 	}
-	return func(cfg *Config) { cfg.CustomInsightsEvents.MaxSamplesStored = limit }
 }
 
-// ConfigCustomInsightsEventsEnabled enables or disables the collection of custom insight events.
-func ConfigCustomInsightsEventsEnabled(enabled bool) ConfigOption {
-	return func(cfg *Config) { cfg.CustomInsightsEvents.Enabled = enabled }
+// ConfigSpanEventsMaxSamplesStored alters the sample size allowing control
+// of how many span events are stored in an agent for a given harvest cycle.
+// Alters the SpanEvents.MaxSamplesStored setting.
+// Note: As of Oct 2025, the absolute maximum span events that can be sent each minute is 2000.
+func ConfigSpanEventsMaxSamplesStored(value int) ConfigOption {
+	return func(cfg *Config) { cfg.SpanEvents.MaxSamplesStored = maxSpanEvents(value) }
 }
 
+// ConfigSpanEventsEnabled enables or disables the collection of span events.
+func ConfigSpanEventsEnabled(enabled bool) ConfigOption {
+	return func(cfg *Config) { cfg.SpanEvents.Enabled = enabled }
+}
+
+// Deprecated: ConfigDistributedTracerReservoirLimit is deprecated in favor of ConfigSpanEventsMaxSamplesStored
 // ConfigDistributedTracerReservoirLimit alters the sample reservoir size (maximum
 // number of span events to be collected) for distributed tracing instead of
 // using the built-in default.
 // Alters the DistributedTracer.ReservoirLimit setting.
 func ConfigDistributedTracerReservoirLimit(limit int) ConfigOption {
-	return func(cfg *Config) { cfg.DistributedTracer.ReservoirLimit = limit }
+	// will add some logging logic here to notify that this option is deprectated
+	return ConfigSpanEventsMaxSamplesStored(limit)
+}
+
+// ConfigErrorCollectorMaxSamplesStored alters the sample size allowing control
+// of how many errors are stored in an agent for a given harvest cycle.
+// Alters the ErrorCollector.MaxSamplesStored setting.
+// Note: As of Oct 2025, the absolute maximum errors that can be sent each minute is 100.
+func ConfigErrorCollectorMaxSamplesStored(value int) ConfigOption {
+	return func(cfg *Config) {
+		cfg.ErrorCollector.MaxSamplesStored = maxErrorEvents(value)
+	}
 }
 
 // ConfigAIMonitoringStreamingEnabled turns on or off the collection of AI Monitoring streaming mode metrics.
@@ -359,9 +388,10 @@ func ConfigAppLogEnabled(enabled bool) ConfigOption {
 
 // ConfigAppLogForwardingMaxSamplesStored allows users to set the maximium number of
 // log events the agent is allowed to collect and store in a given harvest cycle.
-func ConfigAppLogForwardingMaxSamplesStored(maxSamplesStored int) ConfigOption {
+// Note: As of Oct 2025, the absolute maximum log events that can be sent each minute is 10000.
+func ConfigAppLogForwardingMaxSamplesStored(limit int) ConfigOption {
 	return func(cfg *Config) {
-		cfg.ApplicationLogging.Forwarding.MaxSamplesStored = maxSamplesStored
+		cfg.ApplicationLogging.Forwarding.MaxSamplesStored = maxLogEvents(limit)
 	}
 }
 
@@ -458,6 +488,26 @@ func ConfigCustomInsightsCustomAttributesValues(customAttributes map[string]stri
 	}
 }
 
+// ConfigCloudAWSAccountID is used to set the accountID for the AWS account to add as an attribute to span events. This may also be set using the
+// NEW_RELIC_CLOUD_AWS_ACCOUNT_ID environment variable.
+func ConfigCloudAWSAccountID(accountID string) ConfigOption {
+	return func(cfg *Config) {
+		validatedAccountID, err := validateAWSAccountID(accountID)
+		if err != nil {
+			cfg.Error = err
+		}
+		cfg.CloudAWS.AccountID = validatedAccountID
+	}
+}
+
+// ConfigCloudAWSAccountDecodingEnabled is used to enable/disable accountID decoding for an AWS Access Key.  Any value that is decoded will be
+// overriden if the accountID is set in the config.
+func ConfigCloudAWSAccountDecodingEnabled(enabled bool) ConfigOption {
+	return func(cfg *Config) {
+		cfg.CloudAWS.AccountDecoding.Enabled = enabled
+	}
+}
+
 // ConfigFromEnvironment populates the config based on environment variables:
 //
 //		NEW_RELIC_APP_NAME                                			sets AppName
@@ -500,6 +550,7 @@ func ConfigCustomInsightsCustomAttributesValues(customAttributes map[string]stri
 //		NEW_RELIC_AI_MONITORING_ENABLED								sets AIMonitoring.Enabled
 //		NEW_RELIC_AI_MONITORING_STREAMING_ENABLED					sets AIMonitoring.Streaming.Enabled
 //		NEW_RELIC_AI_MONITORING_RECORD_CONTENT_ENABLED				sets AIMonitoring.RecordContent.Enabled
+//		NEW_RELIC_CLOUD_AWS_ACCOUNT_ID								sets CloudAWS.AccountID
 //
 // This function is strict and will assign Config.Error if any of the
 // environment variables cannot be parsed.
@@ -522,12 +573,16 @@ func configFromEnvironment(getenv func(string) string) ConfigOption {
 				}
 			}
 		}
-		assignInt := func(field *int, name string) {
+		assignInt := func(field *int, name string, fn func(configured int) int) {
 			if env := getenv(name); env != "" {
 				if i, err := strconv.Atoi(env); nil != err {
 					cfg.Error = fmt.Errorf("invalid %s value: %s", name, env)
 				} else {
-					*field = i
+					if fn == nil {
+						*field = i
+					} else {
+						*field = fn(i)
+					}
 				}
 			}
 		}
@@ -559,23 +614,46 @@ func configFromEnvironment(getenv func(string) string) ConfigOption {
 		assignString(&cfg.HostDisplayName, "NEW_RELIC_PROCESS_HOST_DISPLAY_NAME")
 		assignString(&cfg.Utilization.BillingHostname, "NEW_RELIC_UTILIZATION_BILLING_HOSTNAME")
 		assignString(&cfg.InfiniteTracing.TraceObserver.Host, "NEW_RELIC_INFINITE_TRACING_TRACE_OBSERVER_HOST")
-		assignInt(&cfg.InfiniteTracing.TraceObserver.Port, "NEW_RELIC_INFINITE_TRACING_TRACE_OBSERVER_PORT")
-		assignInt(&cfg.Utilization.LogicalProcessors, "NEW_RELIC_UTILIZATION_LOGICAL_PROCESSORS")
-		assignInt(&cfg.Utilization.TotalRAMMIB, "NEW_RELIC_UTILIZATION_TOTAL_RAM_MIB")
-		assignInt(&cfg.InfiniteTracing.SpanEvents.QueueSize, "NEW_RELIC_INFINITE_TRACING_SPAN_EVENTS_QUEUE_SIZE")
+		assignInt(&cfg.InfiniteTracing.TraceObserver.Port, "NEW_RELIC_INFINITE_TRACING_TRACE_OBSERVER_PORT", nil)
+		assignInt(&cfg.Utilization.LogicalProcessors, "NEW_RELIC_UTILIZATION_LOGICAL_PROCESSORS", nil)
+		assignInt(&cfg.Utilization.TotalRAMMIB, "NEW_RELIC_UTILIZATION_TOTAL_RAM_MIB", nil)
+		assignInt(&cfg.InfiniteTracing.SpanEvents.QueueSize, "NEW_RELIC_INFINITE_TRACING_SPAN_EVENTS_QUEUE_SIZE", nil)
 
 		// Application Logging Env Variables
 		assignBool(&cfg.ApplicationLogging.Enabled, "NEW_RELIC_APPLICATION_LOGGING_ENABLED")
 		assignBool(&cfg.ApplicationLogging.Forwarding.Enabled, "NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED")
 		assignBool(&cfg.ApplicationLogging.Forwarding.Labels.Enabled, "NEW_RELIC_APPLICATION_LOGGING_FORWARDING_LABELS_ENABLED")
 		assignStringSlice(&cfg.ApplicationLogging.Forwarding.Labels.Exclude, "NEW_RELIC_APPLICATION_LOGGING_FORWARDING_LABELS_EXCLUDE", ",")
-		assignInt(&cfg.ApplicationLogging.Forwarding.MaxSamplesStored, "NEW_RELIC_APPLICATION_LOGGING_FORWARDING_MAX_SAMPLES_STORED")
+		assignInt(&cfg.ApplicationLogging.Forwarding.MaxSamplesStored, "NEW_RELIC_APPLICATION_LOGGING_FORWARDING_MAX_SAMPLES_STORED", maxLogEvents)
 		assignBool(&cfg.ApplicationLogging.Metrics.Enabled, "NEW_RELIC_APPLICATION_LOGGING_METRICS_ENABLED")
 		assignBool(&cfg.ApplicationLogging.LocalDecorating.Enabled, "NEW_RELIC_APPLICATION_LOGGING_LOCAL_DECORATING_ENABLED")
 		assignBool(&cfg.AIMonitoring.Enabled, "NEW_RELIC_AI_MONITORING_ENABLED")
 		assignBool(&cfg.AIMonitoring.Streaming.Enabled, "NEW_RELIC_AI_MONITORING_STREAMING_ENABLED")
 		assignBool(&cfg.AIMonitoring.RecordContent.Enabled, "NEW_RELIC_AI_MONITORING_RECORD_CONTENT_ENABLED")
 		assignBool(&cfg.CustomInsightsEvents.CustomAttributesEnabled, "NEW_RELIC_APPLICATION_LOGGING_FORWARDING_CUSTOM_ATTRIBUTES_ENABLED")
+
+		// Transaction Event Env Variables
+		assignInt(&cfg.TransactionEvents.MaxSamplesStored, "NEW_RELIC_TRANSACTION_EVENTS_MAX_SAMPLES_STORED", maxTxnEvents)
+
+		// Custom Insights Events Env Variables
+		assignInt(&cfg.CustomInsightsEvents.MaxSamplesStored, "NEW_RELIC_CUSTOM_INSIGHTS_EVENTS_MAX_SAMPLES_STORED", maxCustomEvents)
+
+		// Span Event Env Variables
+		assignBool(&cfg.SpanEvents.Enabled, "NEW_RELIC_SPAN_EVENTS_ENABLED")
+		assignInt(&cfg.SpanEvents.MaxSamplesStored, "NEW_RELIC_SPAN_EVENTS_MAX_SAMPLES_STORED", maxSpanEvents)
+
+		// Error Collector Env Variables
+		assignInt(&cfg.ErrorCollector.MaxSamplesStored, "NEW_RELIC_ERROR_COLLECTOR_MAX_EVENT_SAMPLES_STORED", maxErrorEvents)
+
+		// AWS Env Variables
+		assignString(&cfg.CloudAWS.AccountID, "NEW_RELIC_CLOUD_AWS_ACCOUNT_ID")
+		if env := getenv("NEW_RELIC_CLOUD_AWS_ACCOUNT_ID"); env != "" {
+			awsAccountID, err := validateAWSAccountID(env) // will either be a proper accountID or empty string if err
+			if err != nil {
+				cfg.Error = err
+			}
+			cfg.CloudAWS.AccountID = awsAccountID
+		}
 
 		if env := getenv("NEW_RELIC_LABELS"); env != "" {
 			labels, err := getLabels(getenv("NEW_RELIC_LABELS"))
